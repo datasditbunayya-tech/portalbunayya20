@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Portal Pendidikan – Bunayya Islamic School</title>
-  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js" onerror="document.getElementById('app-loading').innerHTML='<div style=padding:40px;text-align:center><h3 style=color:#991b1b>Gagal memuat halaman</h3><p>Periksa koneksi internet lalu refresh.</p><button onclick=location.reload() style=padding:10px 20px;background:#065f46;color:white;border:none;border-radius:8px;cursor:pointer>Refresh</button></div>'"></script>
   <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
   <style>
@@ -635,6 +635,13 @@
   </style>
 </head>
 <body>
+  <div id="app-loading" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:white;z-index:9999;flex-direction:column;align-items:center;justify-content:center;font-family:Arial">
+    <div style="font-size:48px;margin-bottom:16px">🏫</div>
+    <div style="font-size:18px;font-weight:700;color:#065f46;margin-bottom:8px">Bunayya Islamic School</div>
+    <div style="font-size:14px;color:#666;margin-bottom:24px">Memuat aplikasi...</div>
+    <div style="width:48px;height:48px;border:5px solid #d1fae5;border-top-color:#065f46;border-radius:50%;animation:spin 1s linear infinite"></div>
+    <style>@keyframes spin{to{transform:rotate(360deg)}}</style>
+  </div>
   <div id="root"></div>
   <script type="text/babel">
     const { useState, useEffect, useCallback } = React;
@@ -1029,14 +1036,46 @@ function App() {
 
   // ── Google Sheets Integration ─────────────────────────────────────────────
   // Tempel Web App URL dari Google Apps Script setelah Deploy
-  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbw0DKmmpk53yVrYB8dhWMLmIW77Zp3Vg48isYrkazBbWeWjmcuXheTKVOQ8E0NlJAhC/exec";
+  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwae7uWiMnqBceH7YRtD1aN8rRf3PjXFMKIPs38-M7t5O2SoG2tOdC0nj3h_aAcTZrY/exec";
+  // Sync data to localStorage whenever data changes
+  React.useEffect(() => {
+    try { localStorage.setItem("bunayya_data", JSON.stringify(data)); } catch(e) {}
+  }, [data]);
+
   const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | success | error
   const [syncMsg, setSyncMsg]       = useState("");
   const [lastSync, setLastSync]     = useState(null);
   const GS_ENABLED = true;
 
   // Data store
-  const [data, setData] = useState({
+  // Load from localStorage or fallback to MOCK
+  const loadStoredData = () => {
+    try {
+      const stored = localStorage.getItem("bunayya_data");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        return {
+          teachers: parsed.teachers || MOCK_TEACHERS,
+          students: parsed.students || MOCK_STUDENTS,
+          subjects: parsed.subjects || MOCK_SUBJECTS,
+          surahs: parsed.surahs || MOCK_SURAHS,
+          quickLinks: parsed.quickLinks || MOCK_QUICKLINKS,
+          announcements: parsed.announcements || MOCK_ANNOUNCEMENTS,
+          studentAttendance: parsed.studentAttendance || MOCK_STUDENT_ATTENDANCE,
+          teacherAttendance: parsed.teacherAttendance || MOCK_TEACHER_ATTENDANCE,
+          journals: parsed.journals || [],
+          dailyReports: parsed.dailyReports || [],
+          grades: parsed.grades || [],
+          activities: parsed.activities || [],
+          targets: parsed.targets || [],
+          ziyadah: parsed.ziyadah || [],
+        };
+      }
+    } catch(e) {}
+    return null;
+  };
+
+  const [data, setData] = useState(loadStoredData() || {
     teachers: MOCK_TEACHERS,
     students: MOCK_STUDENTS,
     subjects: MOCK_SUBJECTS,
@@ -1064,7 +1103,11 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [addDialog, setAddDialog] = useState(null);
 
-  const patchData = (key, val) => setData(d => ({ ...d, [key]: val }));
+  const patchData = (key, val) => setData(d => {
+    const next = { ...d, [key]: val };
+    try { localStorage.setItem("bunayya_data", JSON.stringify(next)); } catch(e) {}
+    return next;
+  });
   const patchForm = patch => setFormData(f => ({ ...f, ...patch }));
   const showLoading = () => setLoading(true);
   const hideLoading = () => setLoading(false);
@@ -1288,6 +1331,42 @@ function App() {
     setTimeout(() => { setSyncStatus("idle"); setSyncMsg(""); }, 5000);
   };
 
+  const loadFromSheets = async () => {
+    if (!GS_ENABLED) { alert("⚠️ URL Google Sheets belum dipasang!"); return; }
+    setSyncStatus("syncing");
+    setSyncMsg("Memuat data dari Google Sheets...");
+    try {
+      const res = await fetch(SCRIPT_URL + "?action=load", { method: "GET" });
+      const json = await res.json();
+      if (json && json.data) {
+        const d = json.data;
+        const merged = {
+          ...data,
+          studentAttendance: d.absensiSiswa  || data.studentAttendance,
+          teacherAttendance: d.absensiGuru   || data.teacherAttendance,
+          journals:          d.jurnal        || data.journals,
+          dailyReports:      d.harian        || data.dailyReports,
+          grades:            d.nilai         || data.grades,
+          activities:        d.kegiatan      || data.activities,
+          targets:           d.target        || data.targets,
+          ziyadah:           d.ziyadah       || data.ziyadah,
+        };
+        setData(merged);
+        try { localStorage.setItem("bunayya_data", JSON.stringify(merged)); } catch(e) {}
+        setSyncStatus("success");
+        setSyncMsg("✅ Data berhasil dimuat dari Google Sheets");
+        setLastSync(new Date().toLocaleString("id-ID"));
+      } else {
+        setSyncStatus("error");
+        setSyncMsg("❌ Tidak ada data di Google Sheets");
+      }
+    } catch(err) {
+      setSyncStatus("error");
+      setSyncMsg("❌ Gagal memuat: " + (err.message || "periksa koneksi"));
+    }
+    setTimeout(() => { setSyncStatus("idle"); setSyncMsg(""); }, 4000);
+  };
+
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { collection, id, label }
   const deleteItem = (collection, id, label = "") => {
     setDeleteConfirm({ collection, id, label });
@@ -1417,6 +1496,22 @@ function App() {
                 ? <><span style={{display:"inline-block", animation:"spin 1s linear infinite"}}>⟳</span> Sinkron...</>
                 : <><span>☁️</span> {GS_ENABLED ? "Sinkron" : "GSheets"}</>
               }
+            </button>
+          )}
+          {(user?.role === "admin" || user?.role === "teacher") && GS_ENABLED && (
+            <button
+              title="Muat semua data dari Google Sheets ke aplikasi"
+              onClick={loadFromSheets}
+              disabled={syncStatus === "syncing"}
+              style={{
+                display:"flex", alignItems:"center", gap:5,
+                padding:"6px 12px", fontSize:12, fontWeight:700,
+                border:"none", borderRadius:10, cursor:"pointer",
+                background:"rgba(255,255,255,.2)",
+                color:"white", whiteSpace:"nowrap", transition:"all .2s"
+              }}
+            >
+              <span>📥</span> Muat
             </button>
           )}
           {lastSync && (
@@ -1661,7 +1756,7 @@ function PortalGuru({ menu, data, patchData, formData, patchForm, selectedKelas,
       };
       if (items.length === 0) return <div className="empty-state">Belum ada data</div>;
       return (
-        <svg width="100%" viewBox={`0 0 ${totalW} ${H + PAD_BOT + PAD_TOP}`} style={{ overflow:"visible", display:"block" }}>
+        <svg width="100%" viewBox={"0 0 " + totalW + " " + (H + PAD_BOT + PAD_TOP)} preserveAspectRatio="xMinYMin meet" style={{ overflow:"visible", display:"block", maxWidth:"100%" }}>
           {/* Grid lines & Y labels */}
           {yLines.map(frac => {
             const y = PAD_TOP + H - frac * H;
@@ -3659,6 +3754,8 @@ function PortalWali({ menu, data, formData, patchForm, user }) {
 
     const root = ReactDOM.createRoot(document.getElementById("root"));
     root.render(<App />);
+    var loadEl = document.getElementById("app-loading");
+    if (loadEl) loadEl.style.display = "none";
   </script>
 </body>
 </html>
