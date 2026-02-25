@@ -1042,6 +1042,61 @@ function App() {
     try { localStorage.setItem("bunayya_data", JSON.stringify(data)); } catch(e) {}
   }, [data]);
 
+  // ── Auto-refresh dari Google Sheets ──────────────────────────────
+  React.useEffect(() => {
+    if (!GS_ENABLED) return;
+    const normalize = (rows) => {
+      if (!rows || !rows.length) return [];
+      return rows.map(r => {
+        const obj = {};
+        Object.keys(r).forEach(k => {
+          let v = r[k];
+          if (k==="skor"||k==="progressSaatIni"||k==="progressTotal") v = v===""?0:Number(v)||0;
+          if (typeof v==="string") v = v.trim();
+          obj[k] = v;
+        });
+        return obj;
+      });
+    };
+    const pullFromSheets = () => {
+      const cb = "ba_" + Date.now();
+      const t = setTimeout(() => { delete window[cb]; const el=document.getElementById("ba_script"); if(el) el.remove(); }, 12000);
+      window[cb] = (json) => {
+        clearTimeout(t);
+        delete window[cb];
+        const el = document.getElementById("ba_script");
+        if (el) el.remove();
+        if (!json || !json.data) return;
+        const d = json.data;
+        setData(prev => {
+          const next = {
+            ...prev,
+            studentAttendance: d.absensiSiswa&&d.absensiSiswa.length ? normalize(d.absensiSiswa) : prev.studentAttendance,
+            teacherAttendance: d.absensiGuru &&d.absensiGuru.length  ? normalize(d.absensiGuru)  : prev.teacherAttendance,
+            journals:          d.jurnal      &&d.jurnal.length        ? normalize(d.jurnal)       : prev.journals,
+            dailyReports:      d.harian      &&d.harian.length        ? normalize(d.harian)       : prev.dailyReports,
+            grades:            d.nilai       &&d.nilai.length         ? normalize(d.nilai)        : prev.grades,
+            activities:        d.kegiatan    &&d.kegiatan.length      ? normalize(d.kegiatan)     : prev.activities,
+            targets:           d.target      &&d.target.length        ? normalize(d.target)       : prev.targets,
+            ziyadah:           d.ziyadah     &&d.ziyadah.length       ? normalize(d.ziyadah)      : prev.ziyadah,
+          };
+          try { localStorage.setItem("bunayya_data", JSON.stringify(next)); } catch(e) {}
+          return next;
+        });
+        setLastSync(new Date().toLocaleString("id-ID"));
+      };
+      const s = document.createElement("script");
+      s.id = "ba_script";
+      s.src = SCRIPT_URL + "?action=load&callback=" + cb;
+      s.onerror = () => { clearTimeout(t); delete window[cb]; const el=document.getElementById("ba_script"); if(el) el.remove(); };
+      document.head.appendChild(s);
+    };
+    const init = setTimeout(pullFromSheets, 1500);
+    const iv = setInterval(pullFromSheets, 30000);
+    return () => { clearTimeout(init); clearInterval(iv); };
+  }, []);
+  // ─────────────────────────────────────────────────────────────────
+
   const [syncStatus, setSyncStatus] = useState("idle"); // idle | syncing | success | error
   const [syncMsg, setSyncMsg]       = useState("");
   const [lastSync, setLastSync]     = useState(null);
@@ -1564,7 +1619,7 @@ function App() {
           )}
           {lastSync && (
             <div style={{fontSize:10, color:"rgba(255,255,255,.6)", textAlign:"center", whiteSpace:"nowrap"}}>
-              Sync:<br/>{lastSync.split(",")[1]?.trim() || lastSync}
+              🔄 Live<br/>{lastSync.split(",")[1]?.trim() || lastSync}
             </div>
           )}
           <button className="btn-logout" onClick={handleLogout} title="Logout"><Icon.Logout /></button>
