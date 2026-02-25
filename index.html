@@ -1036,7 +1036,7 @@ function App() {
 
   // ── Google Sheets Integration ─────────────────────────────────────────────
   // Tempel Web App URL dari Google Apps Script setelah Deploy
-  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwae7uWiMnqBceH7YRtD1aN8rRf3PjXFMKIPs38-M7t5O2SoG2tOdC0nj3h_aAcTZrY/exec";
+  const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxdJ4uGbM_Cpt1GOqKZipiqYQlu3FYB-I4rMIfVbN28uHrFA6-1vyiyWYHUvzEo8ltG/exec";
   // Sync data to localStorage whenever data changes
   React.useEffect(() => {
     try { localStorage.setItem("bunayya_data", JSON.stringify(data)); } catch(e) {}
@@ -1331,41 +1331,89 @@ function App() {
     setTimeout(() => { setSyncStatus("idle"); setSyncMsg(""); }, 5000);
   };
 
-  const loadFromSheets = async () => {
+  const loadFromSheets = () => {
     if (!GS_ENABLED) { alert("⚠️ URL Google Sheets belum dipasang!"); return; }
     setSyncStatus("syncing");
-    setSyncMsg("Memuat data dari Google Sheets...");
-    try {
-      const res = await fetch(SCRIPT_URL + "?action=load", { method: "GET" });
-      const json = await res.json();
-      if (json && json.data) {
-        const d = json.data;
-        const merged = {
-          ...data,
-          studentAttendance: d.absensiSiswa  || data.studentAttendance,
-          teacherAttendance: d.absensiGuru   || data.teacherAttendance,
-          journals:          d.jurnal        || data.journals,
-          dailyReports:      d.harian        || data.dailyReports,
-          grades:            d.nilai         || data.grades,
-          activities:        d.kegiatan      || data.activities,
-          targets:           d.target        || data.targets,
-          ziyadah:           d.ziyadah       || data.ziyadah,
+    setSyncMsg("⏳ Memuat data dari Google Sheets...");
+
+    const cbName = "bunayya_cb_" + Date.now();
+
+    const cleanup = () => {
+      delete window[cbName];
+      const el = document.getElementById("bunayya_jsonp_script");
+      if (el) el.remove();
+    };
+
+    const normalizeRows = (rows) => {
+      if (!rows || !rows.length) return [];
+      return rows.map(function(r) {
+        var obj = {};
+        Object.keys(r).forEach(function(k) {
+          var v = r[k];
+          // Convert string numbers to number for skor
+          if (k === "skor" || k === "progressSaatIni" || k === "progressTotal") {
+            v = v === "" ? 0 : Number(v) || 0;
+          }
+          // Trim strings
+          if (typeof v === "string") v = v.trim();
+          obj[k] = v;
+        });
+        return obj;
+      });
+    };
+    const applySheetData = (d) => {
+      setData(prev => {
+        const next = {
+          ...prev,
+          studentAttendance: (d.absensiSiswa && d.absensiSiswa.length) ? normalizeRows(d.absensiSiswa) : prev.studentAttendance,
+          teacherAttendance: (d.absensiGuru  && d.absensiGuru.length)  ? normalizeRows(d.absensiGuru)  : prev.teacherAttendance,
+          journals:          (d.jurnal       && d.jurnal.length)       ? normalizeRows(d.jurnal)       : prev.journals,
+          dailyReports:      (d.harian       && d.harian.length)       ? normalizeRows(d.harian)       : prev.dailyReports,
+          grades:            (d.nilai        && d.nilai.length)        ? normalizeRows(d.nilai)        : prev.grades,
+          activities:        (d.kegiatan     && d.kegiatan.length)     ? normalizeRows(d.kegiatan)     : prev.activities,
+          targets:           (d.target       && d.target.length)       ? normalizeRows(d.target)       : prev.targets,
+          ziyadah:           (d.ziyadah      && d.ziyadah.length)      ? normalizeRows(d.ziyadah)      : prev.ziyadah,
         };
-        setData(merged);
-        try { localStorage.setItem("bunayya_data", JSON.stringify(merged)); } catch(e) {}
-        setSyncStatus("success");
-        setSyncMsg("✅ Data berhasil dimuat dari Google Sheets");
-        setLastSync(new Date().toLocaleString("id-ID"));
+        try { localStorage.setItem("bunayya_data", JSON.stringify(next)); } catch(e) {}
+        return next;
+      });
+      setSyncStatus("success");
+      setSyncMsg("✅ Data berhasil dimuat dari Google Sheets");
+      setLastSync(new Date().toLocaleString("id-ID"));
+      setTimeout(() => { setSyncStatus("idle"); setSyncMsg(""); }, 4000);
+    };
+
+    const timer = setTimeout(() => {
+      cleanup();
+      setSyncStatus("error");
+      setSyncMsg("❌ Timeout — pastikan Apps Script sudah di-deploy ulang dengan kode terbaru");
+      setTimeout(() => { setSyncStatus("idle"); setSyncMsg(""); }, 6000);
+    }, 12000);
+
+    window[cbName] = (json) => {
+      clearTimeout(timer);
+      cleanup();
+      if (json && json.data) {
+        applySheetData(json.data);
       } else {
         setSyncStatus("error");
-        setSyncMsg("❌ Tidak ada data di Google Sheets");
+        setSyncMsg("❌ Data kosong di Google Sheets — coba ☁️ Sinkron dulu");
+        setTimeout(() => { setSyncStatus("idle"); setSyncMsg(""); }, 5000);
       }
-    } catch(err) {
+    };
+
+    const script = document.createElement("script");
+    script.id = "bunayya_jsonp_script";
+    script.src = SCRIPT_URL + "?action=load&callback=" + cbName;
+    script.onerror = () => {
+      clearTimeout(timer);
+      cleanup();
       setSyncStatus("error");
-      setSyncMsg("❌ Gagal memuat: " + (err.message || "periksa koneksi"));
-    }
-    setTimeout(() => { setSyncStatus("idle"); setSyncMsg(""); }, 4000);
-  };
+      setSyncMsg("❌ Tidak dapat terhubung ke Google Sheets — periksa koneksi & URL");
+      setTimeout(() => { setSyncStatus("idle"); setSyncMsg(""); }, 5000);
+    };
+    document.head.appendChild(script);
+  }
 
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { collection, id, label }
   const deleteItem = (collection, id, label = "") => {
@@ -1772,7 +1820,7 @@ function PortalGuru({ menu, data, patchData, formData, patchForm, selectedKelas,
           {/* Bars */}
           {items.map((item, i) => {
             const x = PAD_LEFT + i * (W + GAP);
-            const barH = maxVal > 0 ? Math.max((item.val / maxVal) * H, item.val > 0 ? 4 : 0) : 0;
+            const barH = maxVal > 0 ? Math.max((item.val / maxVal) * H, item.val > 0 ? 6 : 2) : 2;
             const barY = PAD_TOP + H - barH;
             const label = shortLabel(item.lbl);
             const lines = label.length > 8 ? [label.slice(0, 8), label.slice(8)] : [label];
@@ -1796,6 +1844,8 @@ function PortalGuru({ menu, data, patchData, formData, patchForm, selectedKelas,
 
           {/* Baseline */}
           <line x1={PAD_LEFT} y1={PAD_TOP + H} x2={totalW} y2={PAD_TOP + H} stroke="#ccc" strokeWidth="1.5" />
+          {/* Y-axis vertical line */}
+          <line x1={PAD_LEFT} y1={PAD_TOP} x2={PAD_LEFT} y2={PAD_TOP + H} stroke="#ddd" strokeWidth="1" />
         </svg>
       );
     };
